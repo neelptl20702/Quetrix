@@ -403,6 +403,91 @@ export default function QuestionPaperApp() {
     }, 1000);
   };
 
+  const getExportFilename = (extension: string) => {
+    const branch = meta.branch || "EXAM";
+    const sem = meta.semester ? `SEM${meta.semester}` : "";
+    const course = meta.courseName ? meta.courseName.replace(/[^a-zA-Z0-9]/g, '_') : "PAPER";
+    const type = meta.examType ? meta.examType.replace(/ /g, '_') : "TEST";
+    return `${branch}_${sem}_${course}_${type}.${extension}`;
+  };
+
+  const escapeRtf = (text: string) => {
+    return (text || "")
+      .replace(/\\/g, "\\\\")
+      .replace(/{/g, "\\{")
+      .replace(/}/g, "\\}")
+      .replace(/\n/g, "\\line ")
+      .replace(/[\u0080-\uFFFF]/g, (ch) => `\\u${ch.charCodeAt(0)}?`);
+  };
+
+  const normalizeQuestionText = (text: string) => {
+    return (text || "")
+      .replace(/\$\$([^$]+)\$\$/g, "$1")
+      .replace(/\$([^$]+)\$/g, "$1");
+  };
+
+  const handleWordCompatibleDownload = () => {
+    const lines: string[] = [];
+    const push = (value: string = "") => lines.push(value);
+
+    push("{\\rtf1\\ansi\\deff0");
+    push("{\\fonttbl{\\f0 Times New Roman;}{\\f1 Calibri;}}");
+    push("\\paperw11906\\paperh16838\\margl1134\\margr1134\\margt850\\margb850");
+    push("\\f0\\fs24");
+
+    push(`\\qc\\b ${escapeRtf(meta.universityName)}\\b0\\par`);
+    push(`\\qc\\b ${escapeRtf(meta.schoolName || "SCHOOL OF ...")}\\b0\\par`);
+    push(`\\qc ${escapeRtf(`${meta.examType} Examination ${meta.academicYear}`.trim())}\\par`);
+    push("\\par");
+
+    push(`\\pard\\ql\\b Branch:\\b0 ${escapeRtf(meta.branch)}\\tab \\b Semester:\\b0 ${escapeRtf(String(meta.semester || ""))}\\par`);
+    push(`\\b Course:\\b0 ${escapeRtf(meta.courseName)}\\tab \\b Code:\\b0 ${escapeRtf(meta.courseCode)}\\par`);
+    push(`\\b Date:\\b0 ${escapeRtf(meta.examDate)}\\tab \\b Time:\\b0 ${escapeRtf(getDurationString())}\\par`);
+    push(`\\b Duration:\\b0 ${escapeRtf(calculatedDuration)}\\tab \\b Max Marks:\\b0 ${totalPaperMarks}\\par`);
+    push("\\par");
+
+    push("\\b Instructions:\\b0\\par");
+    push(`${escapeRtf(meta.instructions)}\\par`);
+    push("\\par");
+
+    sections.forEach((section, sIdx) => {
+      const attemptText = section.attemptCount < section.qCount ? ` (Attempt any ${section.attemptCount})` : "";
+      push(`\\b Q.${sIdx + 1} ${escapeRtf(section.title)} - ${escapeRtf(section.desc)}${escapeRtf(attemptText)} [${section.attemptCount * section.marksPerQ} Marks]\\b0\\par`);
+
+      section.questions.forEach((q, qIdx) => {
+        const questionText = normalizeQuestionText(q.text || "_________________________________");
+        push(`${qIdx + 1}. ${escapeRtf(questionText)}  [${section.marksPerQ}]\\par`);
+
+        if (section.type === 'mcq' && Array.isArray(q.options)) {
+          q.options.forEach((opt: string, oIdx: number) => {
+            const optChar = String.fromCharCode(97 + oIdx);
+            push(`\\li360 (${optChar}) ${escapeRtf(normalizeQuestionText(opt || ""))}\\li0\\par`);
+          });
+        }
+
+        if (previewSettings.showCO || previewSettings.showBloom) {
+          const tags: string[] = [];
+          if (previewSettings.showCO && q.co) tags.push(q.co);
+          if (previewSettings.showBloom && q.bloom) tags.push(q.bloom);
+          if (tags.length) push(`\\i ${escapeRtf(tags.join(" | "))}\\i0\\par`);
+        }
+
+        push("\\par");
+      });
+    });
+
+    push("}");
+
+    const blob = new Blob([lines.join("\n")], { type: "application/rtf;charset=utf-8" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = getExportFilename("rtf");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(link.href);
+  };
+
   const addSection = () => {
     const newId = Math.max(0, ...sections.map(s => s.id)) + 1;
     const newSection = {
@@ -1260,6 +1345,13 @@ export default function QuestionPaperApp() {
              {previewSettings.showWatermark ? <CheckSquare className="w-4 h-4"/> : <div className="w-4 h-4 border rounded border-gray-300"/>} Watermark
            </button>
         </div>
+
+        <button 
+          onClick={handleWordCompatibleDownload}
+          className="bg-blue-700 text-white px-5 py-2 rounded-full font-bold text-sm flex items-center gap-2 hover:bg-blue-800 transition-transform hover:scale-105 shadow-md"
+        >
+          <FileText className="w-4 h-4"/> Word Compatible (.rtf)
+        </button>
 
         <button 
           onClick={handlePrint}
